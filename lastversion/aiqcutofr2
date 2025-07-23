@@ -1,0 +1,230 @@
+import streamlit as st
+import pandas as pd
+import os
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.express as px
+
+def display_cutoff_Analysis():
+    st.title("NEET AIQ Analysis Dashboard")
+
+    # Load the AIQR2 Excel file
+    file_path = os.path.join('data', 'AIQR2.xlsx')
+
+    if not os.path.exists(file_path):
+        st.error("AIQR2 file is missing in the 'data/' folder!")
+        return
+
+    # Load the data
+    try:
+        aiqr2_data = pd.read_excel(file_path, sheet_name='Sheet1')
+    except Exception as e:
+        st.error(f"Error loading the AIQR2 data: {e}")
+        return
+
+    # Clean and prepare data
+    aiqr2_data.fillna("-", inplace=True)
+
+    # Ensure NEET AIR is numeric for proper sorting and calculations
+    aiqr2_data['NEET AIR'] = pd.to_numeric(aiqr2_data['NEET AIR'], errors='coerce')
+    aiqr2_data['NEET AIR'] = aiqr2_data['NEET AIR'].apply(lambda x: int(x) if pd.notnull(x) else '-')
+
+    # Collapse AFMS-related remarks
+    aiqr2_data['R2 Final Remarks'] = aiqr2_data['R2 Final Remarks'].replace(
+        to_replace=r'Fresh Allotted in 2nd Round\( AFMS Rank : \d+ \)', 
+        value='Fresh Allotted in 2nd Round (AFMS)', 
+        regex=True
+    )
+
+    # Replace '-' in R1 Remarks with 'R1 Not Allotted'
+    aiqr2_data['R1 Remarks'] = aiqr2_data['R1 Remarks'].replace('-', 'R1 Not Allotted')
+
+    # Tabs for analysis
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Course and Category Analysis",
+        "Remarks Analysis",
+        "Comparison Analysis",
+        "Interactive Plotly Graphs"
+    ])
+
+    # Tab 1: Course and Category Analysis
+    with tab1:
+        st.write("### Course and Category Analysis")
+
+        # Dropdown filters
+        st.write("### Data Filtering")
+        filter_columns = st.multiselect(
+            "Select Columns to Filter:", 
+            options=aiqr2_data.columns, 
+            key="filter_columns_tab1"
+        )
+
+        filtered_data = aiqr2_data.copy()
+        for column in filter_columns:
+            unique_values = filtered_data[column].unique()
+            selected_values = st.multiselect(
+                f"Select values for {column}:", 
+                options=unique_values, 
+                key=f"filter_values_{column}_tab1"
+            )
+            if selected_values:
+                filtered_data = filtered_data[filtered_data[column].isin(selected_values)]
+
+        # Pivot table customization
+        st.write("### Pivot Table Customization")
+        index_cols = st.multiselect(
+            "Select Index Columns (Rows):", 
+            options=filtered_data.columns, 
+            default=['R2 Final Course'],
+            key="index_cols_tab1"
+        )
+        column_cols = st.multiselect(
+            "Select Column Fields:", 
+            options=filtered_data.columns, 
+            default=['R2 Final Alloted Category'],
+            key="column_cols_tab1"
+        )
+        value_col = st.selectbox(
+            "Select Values Column:", 
+            options=filtered_data.columns, 
+            key="value_col_tab1"
+        )
+        aggfunc = st.selectbox(
+            "Select Aggregation Function:", 
+            options=['max', 'min', 'mean', 'count', 'sum'], 
+            key="aggfunc_tab1"
+        )
+
+        # Create pivot table
+        pivot_table = pd.pivot_table(
+            data=filtered_data,
+            values=value_col,
+            index=index_cols,
+            columns=column_cols,
+            aggfunc=aggfunc,
+            fill_value=0
+        )
+
+        # Display pivot table
+        st.write(f"### Pivot Table ({aggfunc.title()} of {value_col})")
+        st.dataframe(pivot_table)
+
+        # Heatmap visualization
+        st.write("### Heatmap Visualization")
+        fig, ax = plt.subplots(figsize=(12, 8), dpi=150)
+        sns.heatmap(pivot_table, annot=True, fmt=".0f", cmap="YlGnBu", linewidths=0.5, ax=ax)
+        ax.set_title(f"Heatmap: {aggfunc.title()} of {value_col}", fontsize=16)
+        ax.set_xlabel(", ".join(column_cols), fontsize=12)
+        ax.set_ylabel(", ".join(index_cols), fontsize=12)
+        st.pyplot(fig)
+
+    # Tab 2: Remarks Analysis
+    with tab2:
+        st.write("### Remarks Analysis")
+
+        combined_remarks_analysis = aiqr2_data.groupby(['R1 Remarks', 'R2 Final Remarks']).size().reset_index(name='Count')
+        st.write("#### Combined R1 and R2 Remarks Analysis Table")
+        st.dataframe(combined_remarks_analysis)
+
+        st.write("#### Heatmap: R1 to R2 Remarks Transition")
+        pivot_data = combined_remarks_analysis.pivot(
+            index='R1 Remarks', columns='R2 Final Remarks', values='Count'
+        ).fillna(0)
+
+        fig, ax = plt.subplots(figsize=(12, 8), dpi=150)
+        sns.heatmap(pivot_data, annot=True, fmt=".0f", cmap="YlGnBu", linewidths=0.5, ax=ax)
+        ax.set_title("R1 to R2 Remarks Transition Heatmap", fontsize=16)
+        st.pyplot(fig)
+
+    # Tab 3: Comparison Analysis
+    with tab3:
+        st.write("### Comparison Analysis")
+        
+        # Filtered data setup
+        filtered_data = aiqr2_data.copy()
+        filter_columns = st.multiselect(
+            "Select Columns to Filter:", 
+            options=aiqr2_data.columns, 
+            key="filter_columns_tab3"
+        )
+    
+        # Dynamic filtering based on selected columns
+        for column in filter_columns:
+            if aiqr2_data[column].dtype == 'object':
+                unique_values = filtered_data[column].unique()
+                selected_values = st.multiselect(
+                    f"Filter values in {column}:", 
+                    options=unique_values, 
+                    key=f"filter_values_{column}_tab3"
+                )
+                if selected_values:
+                    filtered_data = filtered_data[filtered_data[column].isin(selected_values)]
+            elif pd.api.types.is_numeric_dtype(aiqr2_data[column]):
+                min_val, max_val = st.slider(
+                    f"Select range for {column}:",
+                    min_value=float(filtered_data[column].min()),
+                    max_value=float(filtered_data[column].max()),
+                    value=(float(filtered_data[column].min()), float(filtered_data[column].max())),
+                    key=f"range_filter_{column}_tab3"
+                )
+                filtered_data = filtered_data[(filtered_data[column] >= min_val) & (filtered_data[column] <= max_val)]
+    
+        # Display filtered data table
+        st.write("### Filtered Data Table")
+        st.dataframe(filtered_data)
+    
+        # Scatter plot customization
+        st.write("### Customize Scatter Plot")
+        y_axis_column = st.selectbox(
+            "Select Y-Axis:", 
+            options=aiqr2_data.columns, 
+            index=aiqr2_data.columns.get_loc('R2 Final Course'), 
+            key="y_axis_tab3"
+        )
+        hue_column = st.selectbox(
+            "Select Hue (Color):", 
+            options=aiqr2_data.columns, 
+            index=aiqr2_data.columns.get_loc('R2 Final Alloted Category'), 
+            key="hue_tab3"
+        )
+        style_column = st.selectbox(
+            "Select Style (Shape):", 
+            options=aiqr2_data.columns, 
+            index=aiqr2_data.columns.get_loc('R2 Final Allotted Quota'), 
+            key="style_tab3"
+        )
+    
+        # Create and display scatter plot
+        fig, ax = plt.subplots(figsize=(12, 8), dpi=150)
+        sns.scatterplot(
+            data=filtered_data,
+            x='NEET AIR',
+            y=y_axis_column,
+            hue=hue_column,
+            style=style_column,
+            ax=ax,
+            s=50
+        )
+        ax.grid(visible=True, which='both', axis='x', linestyle='--', linewidth=0.7, alpha=0.5)
+        ax.set_title(f"Filtered Comparison: NEET AIR vs {y_axis_column}", fontsize=14)
+        ax.set_xlabel('NEET AIR', fontsize=14)
+        ax.set_ylabel(y_axis_column, fontsize=14)
+        ax.legend(bbox_to_anchor=(1.01, 1), loc='upper left', borderaxespad=0.)
+        st.pyplot(fig)
+
+
+    # Tab 4: Interactive Plotly Graphs
+    with tab4:
+        st.write("### Interactive Plotly Graphs")
+        fig = px.scatter(
+            filtered_data,
+            x='NEET AIR',
+            y='R2 Final Course',
+            color='R2 Final Alloted Category',
+            title="Scatter Plot: NEET AIR vs R2 Final Course",
+            hover_data=filtered_data.columns
+        )
+        st.plotly_chart(fig)
+
+# Call the function to display the dashboard
+display_cutoff_Analysis()
